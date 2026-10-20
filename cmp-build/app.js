@@ -194,7 +194,7 @@ async function submit(mode){
   activeTask={...result,mode};showTaskState(activeTask);schedulePoll();
  }catch(error){
   status.classList.add('error');
-  if(error.id)showTask(status,error.message,workflowURL(mode));
+  if(error.id)showTask(status,error.message,workflowURL());
   else status.textContent=error.message;
   if(!error.unconfirmed)retryRequest=null;
   if(error.id&&error.status==='failed')forgetFailedBuild(error.id);

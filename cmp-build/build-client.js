@@ -35,8 +35,8 @@ export function buildRequest(branches,dependencies,suffix,url){
  return {schema_version:1,sources,suffix,publish_url:destination,dependencies:choices};
 }
 
-export function workflowURL(mode){
- return `https://github.com/${REPOSITORY}/actions/workflows/${mode==='debug'?'debug':'build'}.yml`;
+export function workflowURL(){
+ return `https://github.com/${REPOSITORY}/actions/workflows/build.yml`;
 }
 
 export async function getBuildStatus(id,{fetcher=fetch,signal}={}){
@@ -101,7 +101,7 @@ export async function submitBuild(mode,request,credentials,{fetcher=fetch,public
    throw error;
   }
   if(!id||!taskStatuses.includes(result.status))throw unconfirmed();
-  attempt.result={id,status:result.status,url:workflowURL(mode)};
+  attempt.result={id,status:result.status,url:workflowURL()};
   return {...attempt.result,reused:false};
  })();
  try{return await attempt.pending;}finally{attempt.pending=null;}
