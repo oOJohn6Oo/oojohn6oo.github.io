@@ -1,0 +1,173 @@
+import {publicationURL,validateCredentials,validateUsername,validatePassword} from './credential-crypto.js';
+import {createBranchPicker} from './branch-picker.js';
+import {buildDebugRequest,dispatchDebug,normalizeSuffix,validSuffix} from './debug-client.js';
+const $ = (id) => document.getElementById(id);
+const repositories = {public:'https://maven.eazytec-cloud.com/nexus/repository/maven-public',inner:'https://maven.eazytec-cloud.com/nexus/repository/maven-inner'};
+const deps = [
+ ['kotlin','Kotlin','org.jetbrains.kotlin','kotlin-gradle-plugin'],
+ ['skiko','Skiko OHOS','org.jetbrains.skiko','skiko-ohosarm64-api'],
+ ['serialization','Serialization','org.jetbrains.kotlinx','kotlinx-serialization-core'],
+ ['coroutines_core','Coroutines · Core','org.jetbrains.kotlinx','kotlinx-coroutines-core'],
+ ['coroutines_cmp','Coroutines · CMP','org.jetbrains.kotlinx','kotlinx-coroutines-core'],
+ ['okio','Okio','com.squareup.okio','okio'],
+ ['atomicfu','AtomicFU','org.jetbrains.kotlinx','atomicfu'],
+ ['datetime','DateTime','org.jetbrains.kotlinx','kotlinx-datetime'],
+];
+const state = {branches:{}, dependencies:{}};
+function element(tag, text, cls) {const el=document.createElement(tag);if(text!==undefined)el.textContent=text;if(cls)el.className=cls;return el;}
+const dependencyRepositories=['inner','public'];
+function suffix(){return normalizeSuffix($('suffix').value);}
+function updateSummary(){
+ const items=[['CMP Core',state.branches.core?.name||'未选择'],['CMP',state.branches.cmp?.name||'未选择'],['依赖覆盖',`${Object.values(state.dependencies).filter(x=>x.mode!=='default').length} 项`],['发布版本',suffix()?`1.12.0-${suffix()}`:'—'],['发布目标',$('publish-url').value.trim()||'未填写']];
+ $('summary').replaceChildren(...items.flatMap(([a,b])=>[element('dt',a),element('dd',b)]));
+ $('full-version').textContent=suffix()?`1.12.0-${suffix()}`:'1.12.0-…';
+ const suffixInvalid=Boolean($('suffix').value)&&!validSuffix(suffix());
+ $('suffix-message').hidden=!suffixInvalid;
+ $('suffix-message').textContent=suffixInvalid?'后缀须以数字结尾，可用字母、数字、点、横线和下划线（最多 64 位），勿填写完整版本号':'';
+ $('suffix').setAttribute('aria-invalid',String(suffixInvalid));
+ const dependencies=Object.values(state.dependencies);
+ const failed=dependencies.filter(d=>d.error).length;
+ const loading=dependencies.some(d=>d.loading);
+ $('dependency-state').textContent=failed?`${failed} 项待检查`:loading?'查询中…':`${dependencies.length} 项`;
+ $('dependency-state').classList.toggle('error',failed>0);
+ $('reset-modes').setAttribute('aria-pressed',String(dependencies.length>0&&dependencies.every(d=>d.mode==='default')));
+ $('latest-modes').setAttribute('aria-pressed',String(dependencies.length>0&&dependencies.every(d=>d.mode==='latest')));
+}
+async function request(url) {
+ const response=await fetch(url,{signal:AbortSignal.timeout(20000),credentials:'omit',cache:'no-store'});
+ if(!response.ok){const error=new Error(response.status===404?'资源不存在或没有访问权限':`请求失败（HTTP ${response.status}）`);error.status=response.status;throw error;}
+ return response;
+}
+for(const [id,label,initial] of [['core','CMP Core','CPF-KMP-CMP/compose-multiplatform-core'],['cmp','CMP','CPF-KMP-CMP/compose-multiplatform']]) {
+ const box=element('div',undefined,'branch-block');
+ const title=element('h3',label);const field=element('label',undefined,'field');
+ const repo=element('input');repo.value=initial;repo.placeholder='GitCode 仓库 · owner/repository';repo.spellcheck=false;repo.setAttribute('aria-label',`${label} 仓库路径`);field.append(repo);
+ const note=element('div','','commit');note.setAttribute('role','status');
+ const picker=createBranchPicker({id,label,
+  load:async()=>{
+   const path=repo.value.trim();
+   if(!/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(path))throw new Error('仓库路径需为 owner/repository');
+   const all=[];
+   for(let page=1;page<=100;page++){
+    const response=await request(`https://api.gitcode.com/api/v5/repos/${path}/branches?per_page=100&page=${page}`);
+    const list=await response.json();if(!Array.isArray(list))throw new Error('接口返回了无法识别的数据');
+    all.push(...list);if(list.length<100)return all;
+   }
+   throw new Error('分支数量超出当前加载上限');
+  },
+  onSelect:branch=>{
+   if(branch){state.branches[id]={repository:repo.value.trim(),name:branch.name,sha:branch.commit?.sha||branch.commit?.id};note.textContent=state.branches[id].sha?state.branches[id].sha.slice(0,8):'未获取到提交 SHA';note.title=state.branches[id].sha||'';}
+   else{delete state.branches[id];note.textContent='';}
+   updateSummary();
+  }
+ });
+ repo.addEventListener('input',()=>picker.reset());
+ box.append(title,field,picker.element,note);$('branches').append(box);
+}
+for(const [id,label,group,artifact] of deps){
+ const row=element('div',undefined,'dependency');
+ const info=element('div');info.append(element('strong',label));
+ const mode=element('select');mode.setAttribute('aria-label',`${label} 版本模式`);for(const [v,t] of [['default','分支默认'],['latest','最新 release'],['custom','自定义']])mode.append(new Option(t,v));
+ const valueBox=element('div');const version=element('input');version.placeholder='分支版本待解析';version.disabled=true;version.setAttribute('aria-label',`${label} 版本`);
+ const check=element('button','检查版本','check');check.type='button';check.hidden=true;
+ const status=element('div','','status');status.setAttribute('role','status');valueBox.append(version,check,status);
+ const item=state.dependencies[id]={mode:'default'};let generation=0;
+ const invalidate=()=>{generation++;check.disabled=false;item.error=false;item.loading=false;status.className='status';status.textContent='';updateSummary();};
+ item.readVersion=()=>version.value.trim();
+ mode.addEventListener('change',()=>{item.mode=mode.value;version.value='';version.disabled=mode.value!=='custom';version.placeholder=mode.value==='default'?'分支版本待解析':mode.value==='latest'?'构建时解析':'输入版本号';check.hidden=mode.value!=='custom';invalidate();});
+ version.addEventListener('input',invalidate);
+ const queryVersion=async()=>{
+  if(mode.value!=='custom')return;
+  invalidate();const seq=generation;
+  const typed=version.value.trim();if(!/^[A-Za-z0-9][A-Za-z0-9._+-]{0,127}$/.test(typed)){status.textContent='请输入有效版本号';item.error=true;updateSummary();return;}
+  check.disabled=true;item.loading=true;updateSummary();status.textContent='查询中…';
+  try{
+   let source;
+   for(const repo of dependencyRepositories){
+    const url=`${repositories[repo]}/${group.replaceAll('.','/')}/${artifact}/maven-metadata.xml`;
+    let response;
+    try{response=await request(url);}catch(error){if(error.status===404)continue;throw error;}
+    const xml=new DOMParser().parseFromString(await response.text(),'application/xml');
+    if(xml.querySelector('parsererror')||xml.documentElement.nodeName!=='metadata')throw new Error('Maven 返回的 metadata 格式无效');
+    const versions=[...xml.querySelectorAll('versioning > versions > version')].map(x=>x.textContent.trim());
+    if(versions.includes(typed)){source=repo;break;}
+   }
+   if(seq!==generation)return;
+   if(!source)throw new Error('仓库中未找到此版本');
+   version.value=typed;status.className='status success';status.textContent=`✓ maven-${source}`;
+  }catch(e){if(seq===generation){item.error=true;status.className='status error';status.textContent=e.message;}}
+  finally{if(seq===generation){check.disabled=false;item.loading=false;updateSummary();}}
+ };
+ check.addEventListener('click',queryVersion);
+ row.append(info,mode,valueBox);$('dependencies').append(row);
+}
+function setAllModes(mode){
+ for(const select of document.querySelectorAll('.dependency select')){select.value=mode;select.dispatchEvent(new Event('change'));}
+}
+$('toggle-dependencies').addEventListener('click',()=>{
+ const list=$('dependencies');
+ list.hidden=!list.hidden;
+ const button=$('toggle-dependencies');
+ button.setAttribute('aria-expanded',String(!list.hidden));
+ const label=list.hidden?'展开依赖':'收起依赖';
+ button.setAttribute('aria-label',label);
+ button.title=label;
+});
+$('reset-modes').addEventListener('click',()=>setAllModes('default'));
+$('latest-modes').addEventListener('click',()=>setAllModes('latest'));
+$('config-form').addEventListener('submit',e=>e.preventDefault());
+$('config-form').addEventListener('input',updateSummary);
+
+updateSummary();
+
+let debugBusy=false;
+function currentDebugRequest(){
+ const dependencies=Object.fromEntries(Object.entries(state.dependencies).map(([key,item])=>[key,{mode:item.mode,version:item.readVersion()}]));
+ return buildDebugRequest(state.branches,dependencies,$('suffix').value,$('publish-url').value);
+}
+$('debug-run').addEventListener('click',()=>{
+ try{
+  currentDebugRequest();
+  readCredentials();
+  $('debug-error').textContent='';$('debug-token').value='';
+  $('debug-dialog').showModal();
+ }catch(error){$('debug-status').textContent=error.message;}
+});
+$('debug-cancel').addEventListener('click',()=>$('debug-dialog').close());
+$('debug-dialog').addEventListener('close',()=>{$('debug-token').value='';});
+$('debug-dialog').addEventListener('cancel',event=>{if(debugBusy)event.preventDefault();});
+$('debug-form').addEventListener('submit',async event=>{
+ event.preventDefault();if(debugBusy)return;
+ debugBusy=true;
+ for(const id of ['debug-run','debug-submit','debug-cancel'])$(id).disabled=true;
+ $('debug-error').textContent='';$('debug-status').textContent='正在提交 Debug…';
+ let token=$('debug-token').value;$('debug-token').value='';
+ try{
+  const result=await dispatchDebug(currentDebugRequest(),token,readCredentials());
+  $('maven-password').value='';
+  const link=element('a','查看 Debug 日志和报告');link.href=result.url;link.target='_blank';link.rel='noopener noreferrer';
+  $('debug-status').replaceChildren(document.createTextNode(result.reused?'该配置已提交。':'Debug 已提交。'),link);
+  $('debug-dialog').close();
+ }catch(error){$('debug-error').textContent=error.message;$('debug-status').textContent=error.message;}
+ finally{
+  token='';debugBusy=false;
+  for(const id of ['debug-run','debug-submit','debug-cancel'])$(id).disabled=false;
+ }
+});
+
+function readCredentials(){
+ const credentials={username:$('maven-username').value,password:$('maven-password').value};
+ validateCredentials(credentials.username,credentials.password);
+ return credentials;
+}
+for(const id of ['publish-url','maven-username','maven-password']){
+ $(id).addEventListener('blur',()=>{
+  try{
+   if(id==='publish-url')$(id).value=publicationURL($(id).value);
+   else if(id==='maven-username')validateUsername($(id).value);
+   else validatePassword($(id).value);
+   $('repository-error').hidden=true;$(id).setAttribute('aria-invalid','false');
+   updateSummary();
+  }catch(error){$('repository-error').textContent=error.message;$('repository-error').hidden=false;$(id).setAttribute('aria-invalid','true');}
+ });
+}
