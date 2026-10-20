@@ -1,6 +1,6 @@
 import {publicationURL,validateCredentials,validateUsername,validatePassword} from './credential-crypto.js';
 import {createBranchPicker} from './branch-picker.js';
-import {buildRequest,submitBuild,workflowURL,normalizeSuffix,validSuffix} from './build-client.js';
+import {buildRequest,submitBuild,getBuildStatus,forgetFailedBuild,workflowURL,normalizeSuffix,validSuffix} from './build-client.js';
 const $ = (id) => document.getElementById(id);
 const repositories = {public:'https://maven.eazytec-cloud.com/nexus/repository/maven-public',inner:'https://maven.eazytec-cloud.com/nexus/repository/maven-inner'};
 const deps = [
@@ -120,7 +120,23 @@ $('config-form').addEventListener('input',updateSummary);
 
 updateSummary();
 
-let submitting=false;
+let phase='idle',activeMode=null,activeTask=null,retryRequest=null,pollTimer=null,pollController=null,pageActive=true;
+const taskLabels={pending:'等待运行',running:'运行中',succeeded:'已完成',failed:'构建失败'};
+function setPhase(next,mode=activeMode){
+ phase=next;activeMode=mode;
+ const locked=phase!=='idle';
+ $('config-form').inert=locked;
+ $('config-form').setAttribute('aria-disabled',String(locked));
+ for(const [buttonMode,label] of [['debug','Debug'],['publish','开始发布']]){
+  const button=$(`${buttonMode}-run`);
+  const active=buttonMode===mode;
+  const loading=active&&['submitting','pending','running'].includes(phase);
+  button.disabled=locked&&!(phase==='unconfirmed'&&active);
+  button.classList.toggle('is-loading',loading);
+  button.setAttribute('aria-busy',String(loading));
+  button.textContent=active?({submitting:'正在提交…',unconfirmed:'重试提交',pending:'等待运行…',running:'运行中…',succeeded:'已完成'}[phase]||label):label;
+ }
+}
 function currentRequest(){
  const dependencies=Object.fromEntries(Object.entries(state.dependencies).map(([key,item])=>[key,{mode:item.mode,version:item.readVersion()}]));
  return buildRequest(state.branches,dependencies,$('suffix').value,$('publish-url').value);
@@ -129,28 +145,66 @@ function showTask(status,message,url){
  const link=element('a','查看构建任务');link.href=url;link.target='_blank';link.rel='noopener noreferrer';
  status.replaceChildren(document.createTextNode(message),link);
 }
+function stopPolling(){
+ clearTimeout(pollTimer);pollTimer=null;
+ pollController?.abort();pollController=null;
+}
+function showTaskState(task){
+ const status=$(`${task.mode}-status`);
+ status.classList.toggle('error',task.status==='failed');
+ status.classList.toggle('success',task.status==='succeeded');
+ showTask(status,`任务 #${task.id} ${taskLabels[task.status]}。`,task.url);
+ if(task.status==='failed'){
+  stopPolling();forgetFailedBuild(task.id);activeTask=null;setPhase('idle');
+ }else{
+  setPhase(task.status,task.mode);
+  if(task.status==='succeeded')stopPolling();
+ }
+}
+function schedulePoll(){
+ clearTimeout(pollTimer);
+ if(!pageActive||!activeTask||!['pending','running'].includes(activeTask.status))return;
+ pollTimer=setTimeout(async()=>{
+  pollTimer=null;
+  const task=activeTask,controller=new AbortController();pollController=controller;
+  try{
+   const result=await getBuildStatus(task.id,{signal:controller.signal});
+   if(!pageActive||activeTask!==task)return;
+   task.status=result.status;showTaskState(task);
+  }catch{
+   if(!pageActive||activeTask!==task||controller.signal.aborted)return;
+   showTask($(`${task.mode}-status`),`任务 #${task.id} ${taskLabels[task.status]}。暂时无法获取状态，正在重试…`,task.url);
+  }finally{
+   if(pollController===controller)pollController=null;
+   schedulePoll();
+  }
+ },5000);
+}
 async function submit(mode){
- if(submitting)return;
- submitting=true;
- for(const id of ['debug-run','publish-run'])$(id).disabled=true;
+ if(phase!=='idle'&&!(phase==='unconfirmed'&&mode===activeMode))return;
+ setPhase('submitting',mode);
  const status=$(mode==='debug'?'debug-status':'publish-status');
+ for(const id of ['debug-status','publish-status']){$(id).textContent='';$(id).classList.remove('error','success');}
  status.textContent='正在提交…';
  try{
-  const result=await submitBuild(mode,currentRequest(),readCredentials());
+  retryRequest??={request:currentRequest(),credentials:readCredentials()};
+  const result=await submitBuild(mode,retryRequest.request,retryRequest.credentials);
+  retryRequest=null;
   $('maven-password').value='';
-  const label={pending:'已提交',running:'运行中',succeeded:'已完成',failed:'失败'}[result.status];
-  showTask(status,`任务 #${result.id} ${label}。`,result.url);
+  activeTask={...result,mode};showTaskState(activeTask);schedulePoll();
  }catch(error){
+  status.classList.add('error');
   if(error.id)showTask(status,error.message,workflowURL(mode));
   else status.textContent=error.message;
- }
- finally{
-  submitting=false;
-  for(const id of ['debug-run','publish-run'])$(id).disabled=false;
+  if(!error.unconfirmed)retryRequest=null;
+  if(error.id&&error.status==='failed')forgetFailedBuild(error.id);
+  setPhase(error.unconfirmed?'unconfirmed':'idle',mode);
  }
 }
 $('debug-run').addEventListener('click',()=>submit('debug'));
 $('publish-run').addEventListener('click',()=>submit('publish'));
+window.addEventListener('pagehide',()=>{pageActive=false;stopPolling();});
+window.addEventListener('pageshow',()=>{pageActive=true;if(!pollController)schedulePoll();});
 
 function readCredentials(){
  const credentials={username:$('maven-username').value,password:$('maven-password').value};

@@ -54,3 +54,7 @@ button:focus-visible,input:focus-visible,select:focus-visible{outline:3px solid 
 
 .debug-button{width:100%;margin-top:12px;color:var(--accent);border-color:var(--accent)}
 #debug-status a,#publish-status a{display:block;color:var(--accent);margin-top:5px}
+#config-form[inert]{opacity:.65}
+.is-loading::before{content:"";display:inline-block;width:12px;height:12px;margin-right:8px;vertical-align:-2px;border:2px solid currentColor;border-right-color:transparent;border-radius:50%;animation:button-spin .8s linear infinite}
+@keyframes button-spin{to{transform:rotate(360deg)}}
+@media(prefers-reduced-motion:reduce){.is-loading::before{animation:none}}

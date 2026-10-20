@@ -1,7 +1,12 @@
 import {publicationURL,validateCredentials,encryptCredentials,loadPublicKey} from './credential-crypto.js';
 const REPOSITORY='oOJohn6Oo/ohos-cmp-builder';
 const API='https://vjmzpjoqgjuvlaubmjgm.supabase.co/functions/v1/submit-build';
+const STATUS_API='https://vjmzpjoqgjuvlaubmjgm.supabase.co/rest/v1/cmp_builds';
+const PUBLISHABLE_KEY='sb_publishable_pSJV2qW4Y5YrvgXM8MioMA_FGLLOZly';
 const attempts=new Map();
+const taskStatuses=['pending','running','succeeded','failed'];
+const validTaskID=id=>typeof id==='string'&&/^[1-9][0-9]*$/.test(id);
+function unconfirmed(){const error=new Error('提交结果未确认，请重试；不会重复创建任务');error.unconfirmed=true;return error;}
 
 export const normalizeSuffix=value=>value.trim().replace(/^-+/,'');
 export const validSuffix=value=>/^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/.test(value)&&/[0-9]$/.test(value)&&!/^1\.(12\.0|9\.2)/.test(value);
@@ -34,6 +39,24 @@ export function workflowURL(mode){
  return `https://github.com/${REPOSITORY}/actions/workflows/${mode==='debug'?'debug':'build'}.yml`;
 }
 
+export async function getBuildStatus(id,{fetcher=fetch,signal}={}){
+ if(!validTaskID(id))throw new Error('任务 ID 无效');
+ const timeout=AbortSignal.timeout(20000);
+ const response=await fetcher(`${STATUS_API}?id=eq.${id}&select=id::text,status`,{
+  headers:{apikey:PUBLISHABLE_KEY},
+  credentials:'omit',cache:'no-store',redirect:'error',signal:signal?AbortSignal.any([signal,timeout]):timeout,
+ });
+ if(!response.ok)throw new Error(`暂时无法查询构建状态（HTTP ${response.status}）`);
+ const rows=await response.json();
+ const result=Array.isArray(rows)&&rows.length===1?rows[0]:null;
+ if(result?.id!==id||!taskStatuses.includes(result.status))throw new Error('构建状态响应无效');
+ return {id:result.id,status:result.status};
+}
+
+export function forgetFailedBuild(id){
+ for(const [key,attempt] of attempts)if(attempt.result?.id===id||attempt.failed?.id===id)attempts.delete(key);
+}
+
 export async function submitBuild(mode,request,credentials,{fetcher=fetch,publicConfig}={}){
  if(!['debug','publish'].includes(mode))throw new Error('构建模式无效');
  validateCredentials(credentials.username,credentials.password);
@@ -64,19 +87,20 @@ export async function submitBuild(mode,request,credentials,{fetcher=fetch,public
     body:JSON.stringify({mode,request_json:serialized,credentials:encrypted}),
     credentials:'omit',cache:'no-store',redirect:'error',signal:AbortSignal.timeout(60000),
    });
-  }catch{throw new Error('提交结果未确认，请在当前页面重试');}
+  }catch{throw unconfirmed();}
   let result;
-  try{result=await response.json();}catch{throw new Error('提交结果未确认，请在当前页面重试');}
-  if(!result||typeof result!=='object')throw new Error('任务响应不完整，请在当前页面重试');
-  const id=typeof result.id==='string'&&/^[1-9][0-9]*$/.test(result.id)?result.id:null;
+  try{result=await response.json();}catch{throw unconfirmed();}
+  if(!result||typeof result!=='object')throw unconfirmed();
+  const id=validTaskID(result.id)?result.id:null;
   if(!response.ok){
    const message=typeof result.error==='string'?result.error:`提交失败（HTTP ${response.status}）`;
    const error=new Error(id?`任务 #${id}：${message}`:message);
    error.id=id;error.status=result.status;
    if(id&&result.status==='failed')attempt.failed=error;
+   else if(response.status>=500){error.unconfirmed=true;error.message+='；请重试确认，不会重复创建任务';}
    throw error;
   }
-  if(!id||!['pending','running','succeeded','failed'].includes(result.status))throw new Error('任务响应不完整，请在当前页面重试');
+  if(!id||!taskStatuses.includes(result.status))throw unconfirmed();
   attempt.result={id,status:result.status,url:workflowURL(mode)};
   return {...attempt.result,reused:false};
  })();
