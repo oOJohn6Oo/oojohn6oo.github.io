@@ -47,24 +47,14 @@
       <div class="summary-card">
         <h2>发布摘要</h2>
         <dl id="summary"></dl>
-        <button type="button" disabled class="primary submit" aria-describedby="publish-status">开始发布</button>
-        <p class="hint publish-status" id="publish-status">发布功能尚未接入</p>
+        <button type="button" id="publish-run" class="primary submit" aria-describedby="publish-status">开始发布</button>
+        <p class="hint publish-status" id="publish-status" role="status"></p>
         <button type="button" id="debug-run" class="debug-button">Debug</button>
         <p id="debug-status" class="hint" role="status"></p>
       </div>
     </aside>
   </div>
 </main>
-<dialog id="debug-dialog" aria-labelledby="debug-title">
-  <form id="debug-form">
-    <h2 id="debug-title">Debug</h2>
-    <p class="hint">检查源码、版本和编译环境，跳过编译与发布。</p>
-    <label class="field"><span>GitHub Token</span><input id="debug-token" type="password" required autocomplete="off" spellcheck="false" placeholder="该构建仓库的 Actions 写入权限"></label>
-    <p class="hint">仅用于本次请求，不保存 Token。</p>
-    <p id="debug-error" class="hint error" role="alert"></p>
-    <div class="debug-actions"><button type="button" id="debug-cancel">取消</button><button type="submit" id="debug-submit">运行 Debug</button></div>
-  </form>
-</dialog>
 <script type="module" src="app.js"></script>
 </body>
 </html>

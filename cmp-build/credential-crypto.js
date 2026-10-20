@@ -20,8 +20,10 @@ export function validateCredentials(username,password){
 const encoder=new TextEncoder();
 const base64url=bytes=>btoa(String.fromCharCode(...new Uint8Array(bytes))).replaceAll('+','-').replaceAll('/','_').replace(/=+$/,'');
 const hex=bytes=>Array.from(new Uint8Array(bytes),b=>b.toString(16).padStart(2,'0')).join('');
-export async function encryptCredentials(username,password,requestId,requestJSON,publicConfig){
+export async function encryptCredentials(username,password,requestJSON,publicConfig,expiresAt){
  validateCredentials(username,password);
+ const now=Math.floor(Date.now()/1000);
+ if(!Number.isInteger(expiresAt)||expiresAt<=now||expiresAt>now+86400)throw new Error('提交已过期，请重新提交');
  if(!globalThis.crypto?.subtle)throw new Error('凭据加密需要 HTTPS 或 localhost');
  let der,key;
  try{
@@ -33,7 +35,7 @@ export async function encryptCredentials(username,password,requestId,requestJSON
  const aes=await crypto.subtle.generateKey({name:'AES-GCM',length:256},true,['encrypt']);
  const raw=new Uint8Array(await crypto.subtle.exportKey('raw',aes));
  const iv=crypto.getRandomValues(new Uint8Array(12));
- const payload={username,password,request_id:requestId,request_sha256:hex(await crypto.subtle.digest('SHA-256',encoder.encode(requestJSON))),expires_at:Math.floor(Date.now()/1000)+86400};
+ const payload={username,password,request_sha256:hex(await crypto.subtle.digest('SHA-256',encoder.encode(requestJSON))),expires_at:expiresAt};
  const ciphertext=await crypto.subtle.encrypt({name:'AES-GCM',iv},aes,encoder.encode(JSON.stringify(payload)));
  const wrapped=await crypto.subtle.encrypt({name:'RSA-OAEP'},key,raw);raw.fill(0);
  return JSON.stringify({v:1,key_id:publicConfig.key_id,iv:base64url(iv),wrapped_key:base64url(wrapped),ciphertext:base64url(ciphertext)});

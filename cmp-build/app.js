@@ -1,6 +1,6 @@
 import {publicationURL,validateCredentials,validateUsername,validatePassword} from './credential-crypto.js';
 import {createBranchPicker} from './branch-picker.js';
-import {buildDebugRequest,dispatchDebug,normalizeSuffix,validSuffix} from './debug-client.js';
+import {buildRequest,submitBuild,workflowURL,normalizeSuffix,validSuffix} from './build-client.js';
 const $ = (id) => document.getElementById(id);
 const repositories = {public:'https://maven.eazytec-cloud.com/nexus/repository/maven-public',inner:'https://maven.eazytec-cloud.com/nexus/repository/maven-inner'};
 const deps = [
@@ -120,40 +120,37 @@ $('config-form').addEventListener('input',updateSummary);
 
 updateSummary();
 
-let debugBusy=false;
-function currentDebugRequest(){
+let submitting=false;
+function currentRequest(){
  const dependencies=Object.fromEntries(Object.entries(state.dependencies).map(([key,item])=>[key,{mode:item.mode,version:item.readVersion()}]));
- return buildDebugRequest(state.branches,dependencies,$('suffix').value,$('publish-url').value);
+ return buildRequest(state.branches,dependencies,$('suffix').value,$('publish-url').value);
 }
-$('debug-run').addEventListener('click',()=>{
+function showTask(status,message,url){
+ const link=element('a','查看构建任务');link.href=url;link.target='_blank';link.rel='noopener noreferrer';
+ status.replaceChildren(document.createTextNode(message),link);
+}
+async function submit(mode){
+ if(submitting)return;
+ submitting=true;
+ for(const id of ['debug-run','publish-run'])$(id).disabled=true;
+ const status=$(mode==='debug'?'debug-status':'publish-status');
+ status.textContent='正在提交…';
  try{
-  currentDebugRequest();
-  readCredentials();
-  $('debug-error').textContent='';$('debug-token').value='';
-  $('debug-dialog').showModal();
- }catch(error){$('debug-status').textContent=error.message;}
-});
-$('debug-cancel').addEventListener('click',()=>$('debug-dialog').close());
-$('debug-dialog').addEventListener('close',()=>{$('debug-token').value='';});
-$('debug-dialog').addEventListener('cancel',event=>{if(debugBusy)event.preventDefault();});
-$('debug-form').addEventListener('submit',async event=>{
- event.preventDefault();if(debugBusy)return;
- debugBusy=true;
- for(const id of ['debug-run','debug-submit','debug-cancel'])$(id).disabled=true;
- $('debug-error').textContent='';$('debug-status').textContent='正在提交 Debug…';
- let token=$('debug-token').value;$('debug-token').value='';
- try{
-  const result=await dispatchDebug(currentDebugRequest(),token,readCredentials());
+  const result=await submitBuild(mode,currentRequest(),readCredentials());
   $('maven-password').value='';
-  const link=element('a','查看 Debug 日志和报告');link.href=result.url;link.target='_blank';link.rel='noopener noreferrer';
-  $('debug-status').replaceChildren(document.createTextNode(result.reused?'该配置已提交。':'Debug 已提交。'),link);
-  $('debug-dialog').close();
- }catch(error){$('debug-error').textContent=error.message;$('debug-status').textContent=error.message;}
- finally{
-  token='';debugBusy=false;
-  for(const id of ['debug-run','debug-submit','debug-cancel'])$(id).disabled=false;
+  const label={pending:'已提交',running:'运行中',succeeded:'已完成',failed:'失败'}[result.status];
+  showTask(status,`任务 #${result.id} ${label}。`,result.url);
+ }catch(error){
+  if(error.id)showTask(status,error.message,workflowURL(mode));
+  else status.textContent=error.message;
  }
-});
+ finally{
+  submitting=false;
+  for(const id of ['debug-run','publish-run'])$(id).disabled=false;
+ }
+}
+$('debug-run').addEventListener('click',()=>submit('debug'));
+$('publish-run').addEventListener('click',()=>submit('publish'));
 
 function readCredentials(){
  const credentials={username:$('maven-username').value,password:$('maven-password').value};

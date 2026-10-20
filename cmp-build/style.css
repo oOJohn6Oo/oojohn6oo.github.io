@@ -53,9 +53,4 @@ dl{display:grid;grid-template-columns:auto minmax(0,1fr);gap:16px 14px;margin:0 
 button:focus-visible,input:focus-visible,select:focus-visible{outline:3px solid var(--focus);outline-offset:3px}
 
 .debug-button{width:100%;margin-top:12px;color:var(--accent);border-color:var(--accent)}
-#debug-status a{display:block;color:var(--accent);margin-top:5px}
-#debug-dialog{width:min(440px,calc(100% - 32px));padding:24px;border:1px solid var(--line);border-radius:14px;background:var(--surface);color:var(--text);box-shadow:var(--panel-shadow)}
-#debug-dialog::backdrop{background:#0008}
-#debug-dialog .field{margin-top:18px}#debug-dialog .field>span{display:block;margin-bottom:8px}
-.debug-actions{display:flex;justify-content:flex-end;gap:10px;margin-top:20px}
-#debug-submit{background:var(--button);color:var(--button-text);border-color:var(--button)}
+#debug-status a,#publish-status a{display:block;color:var(--accent);margin-top:5px}
