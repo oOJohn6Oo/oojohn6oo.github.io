@@ -32,13 +32,13 @@ function show(id){
 		document.getElementById("nav").style.filter='blur(10px)';
 		document.getElementById("ov-btmleft").style.display='inline';
 		if(id=="banner1")
-			$('.overlay>:first-child').attr('src','http://player.youku.com/embed/XOTE2NTkwNzI4');
+			$('.overlay>:first-child').attr('src','https://player.youku.com/embed/XOTE2NTkwNzI4');
 		else if(id=="banner2")
-			$('.overlay>:first-child').attr('src','http://player.youku.com/embed/XNzI5MTIwMjk2');
+			$('.overlay>:first-child').attr('src','https://player.youku.com/embed/XNzI5MTIwMjk2');
 		else if(id=="banner3")
 			$('.overlay>:first-child').attr('src','https://www.nowcoder.com/ta/coding-interviews?page=1');
 		else
-			$('.overlay>:first-child').attr('src','http://player.youku.com/embed/XMzYxMzEwMTM4OA==');
+			$('.overlay>:first-child').attr('src','//player.bilibili.com/player.html?isOutside=true&aid=23570119&bvid=BV1Pp411f72E&cid=39342140&p=1');
 	}
 	isShowed=!isShowed;
 }
